@@ -25,9 +25,6 @@ h1 {
     margin-top: 0;
 }
 
-
-/* CAMERA */
-
 .camera-box {
     width: 100%;
     margin-top: 20px;
@@ -36,18 +33,10 @@ h1 {
     overflow: hidden;
 }
 
-#camera,
-#photo {
+#camera {
     width: 100%;
     display: block;
 }
-
-#photo {
-    display: none;
-}
-
-
-/* BUTTONS */
 
 button {
     width: 100%;
@@ -64,12 +53,11 @@ button {
     background: #238636;
 }
 
-.capture-button {
-    background: #1f6feb;
+.status {
+    text-align: center;
+    margin-top: 15px;
+    color: #3fb950;
 }
-
-
-/* INFO */
 
 .info {
     background: #161b22;

@@ -1,13 +1,9 @@
 <!DOCTYPE html>
 <html>
 <head>
-
     <title>PotholeWatch</title>
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <link rel="stylesheet" href="style.css">
-
 </head>
 
 <body>
@@ -15,211 +11,123 @@
 <div class="app">
 
     <h1>🕳️ PotholeWatch</h1>
-
-    <p class="subtitle">Road condition detection</p>
-
-
-    <!-- CAMERA / PHOTO -->
+    <p class="subtitle">Live road condition detection</p>
 
     <div class="camera-box">
-
         <video id="camera" autoplay playsinline></video>
-
-        <canvas id="photo"></canvas>
-
     </div>
 
-
-    <!-- BUTTONS -->
-
-    <button class="start-button" onclick="startCamera()">
-        📷 Start Camera
+    <button class="start-button" onclick="startDetection()">
+        📹 Start Live Detection
     </button>
 
-    <button class="capture-button" onclick="takePhoto()">
-        📸 Take Photo
-    </button>
-
-
-    <!-- LOCATION -->
-
-    <div class="info">
-
-        <h3>📍 Location</h3>
-
-        <p id="location">
-            Not captured
-        </p>
-
+    <div class="status">
+        <span id="status">Detection stopped</span>
     </div>
 
-
-    <!-- TIME -->
+    <div class="info">
+        <h3>📍 Current Location</h3>
+        <p id="location">Waiting for GPS...</p>
+    </div>
 
     <div class="info">
-
-        <h3>🕐 Time</h3>
-
-        <p id="time">
-            Not captured
-        </p>
-
+        <h3>🕐 Last Detection</h3>
+        <p id="time">No detection yet</p>
     </div>
 
 </div>
 
-
 <script>
-
-
-// =========================
-// CAMERA
-// =========================
 
 let camera = document.getElementById("camera");
 
-let photo = document.getElementById("photo");
+let latitude = null;
+let longitude = null;
+
+let gpsWatcher = null;
+let detectionInterval = null;
 
 
-function startCamera() {
+// START CAMERA + GPS
+function startDetection() {
 
+    // Start camera
     navigator.mediaDevices.getUserMedia({
-
         video: {
             facingMode: "environment"
         }
-
     })
-
     .then(function(stream) {
 
         camera.srcObject = stream;
 
-        // Show camera
-        camera.style.display = "block";
-
-        // Hide captured photo
-        photo.style.display = "none";
+        document.getElementById("status").innerHTML =
+            "🟢 Live detection running";
 
     })
-
     .catch(function(error) {
 
         alert("Camera permission denied.");
 
+        console.log(error);
     });
 
-}
 
-
-// =========================
-// TAKE PHOTO
-// =========================
-
-function takePhoto() {
-
-    let context = photo.getContext("2d");
-
-
-    // Match photo size with camera
-
-    photo.width = camera.videoWidth;
-
-    photo.height = camera.videoHeight;
-
-
-    // Capture image
-
-    context.drawImage(
-
-        camera,
-
-        0,
-        0,
-
-        photo.width,
-        photo.height
-
-    );
-
-
-    // Hide live camera
-
-    camera.style.display = "none";
-
-
-    // Show captured photo
-
-    photo.style.display = "block";
-
-
-    // Convert image
-
-    let imageData = photo.toDataURL("image/jpeg");
-
-
-    // =========================
-    // GET LOCATION
-    // =========================
-
-    navigator.geolocation.getCurrentPosition(
+    // Start GPS tracking
+    gpsWatcher = navigator.geolocation.watchPosition(
 
         function(position) {
 
-            let latitude = position.coords.latitude;
-
-            let longitude = position.coords.longitude;
-
-            let currentTime = new Date().toISOString();
-
-
-            // Create pothole data
-
-            let potholeData = {
-
-                image: imageData,
-
-                latitude: latitude,
-
-                longitude: longitude,
-
-                time: currentTime
-
-            };
-
-
-            // Show location
+            latitude = position.coords.latitude;
+            longitude = position.coords.longitude;
 
             document.getElementById("location").innerHTML =
-
                 "Latitude: " + latitude.toFixed(6) +
-
                 "<br>" +
-
                 "Longitude: " + longitude.toFixed(6);
 
-
-            // Show time
-
-            document.getElementById("time").innerHTML =
-
-                new Date().toLocaleString();
-
-
-            console.log(potholeData);
-
         },
-
 
         function(error) {
 
             document.getElementById("location").innerHTML =
+                "❌ GPS unavailable";
 
-                "❌ Location unavailable";
+            console.log(error);
 
+        },
+
+        {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 10000
         }
 
     );
+
+
+    // FOR NOW:
+    // Assume a pothole is detected every second
+
+    detectionInterval = setInterval(function() {
+
+        if (latitude !== null && longitude !== null) {
+
+            let currentTime = new Date();
+
+            document.getElementById("time").innerHTML =
+                currentTime.toLocaleString();
+
+            console.log({
+                pothole: true,
+                latitude: latitude,
+                longitude: longitude,
+                time: currentTime.toISOString()
+            });
+
+        }
+
+    }, 1000);
 
 }
 
