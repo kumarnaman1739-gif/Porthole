@@ -1,165 +1,255 @@
 <!DOCTYPE html>
 <html>
 <head>
+
     <title>Pothole Detection</title>
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="stylesheet" href="style.css">
+
 </head>
+
 
 <body>
 
-    <h1>Pothole Detection</h1>
+    <div class="app">
 
-    <h2>Camera</h2>
+        <!-- HEADER -->
 
-    <video id="camera" width="300" autoplay playsinline></video>
+        <div class="header">
 
-    <br><br>
+            <div>
+                <h1>🕳️ Pothole<span>Watch</span></h1>
+                <p>Road condition detection</p>
+            </div>
 
-    <button onclick="startCamera()">
-        Start Camera
-    </button>
+            <div class="status-dot"></div>
 
-    <button onclick="takePhoto()">
-        Take Photo
-    </button>
-
-    <br><br>
-
-    <canvas id="photo" width="300"></canvas>
-
-    <h3>Pothole Information</h3>
-
-    <p id="location">
-        Location not captured
-    </p>
-
-    <p id="time">
-        Time not captured
-    </p>
-
-    <h3>Data Created</h3>
-
-    <pre id="data">
-No pothole data yet.
-    </pre>
+        </div>
 
 
-    <script>
+        <!-- CAMERA -->
+
+        <div class="camera-card">
+
+            <video id="camera" autoplay playsinline></video>
+
+            <div class="camera-label">
+                📷 Live Camera
+            </div>
+
+        </div>
+
+
+        <!-- CAMERA BUTTON -->
+
+        <button class="primary-button" onclick="startCamera()">
+            📷 Start Camera
+        </button>
+
+
+        <!-- LOCATION CARD -->
+
+        <div class="info-card">
+
+            <div class="card-title">
+                📍 Current Location
+            </div>
+
+            <p id="location">
+                Location not captured
+            </p>
+
+        </div>
+
+
+        <!-- PHOTO -->
+
+        <div class="photo-section">
+
+            <h2>Captured Image</h2>
+
+            <canvas id="photo"></canvas>
+
+        </div>
+
+
+        <!-- TAKE PHOTO -->
+
+        <button class="capture-button" onclick="takePhoto()">
+            <span>📸</span>
+            Detect Road
+        </button>
+
+
+        <!-- TIME -->
+
+        <div class="info-card">
+
+            <div class="card-title">
+                🕐 Detection Time
+            </div>
+
+            <p id="time">
+                Time not captured
+            </p>
+
+        </div>
+
+
+        <!-- STATUS -->
+
+        <div class="status-card">
+
+            <div class="status-icon">
+                ✓
+            </div>
+
+            <div>
+                <strong>System Ready</strong>
+                <p>Camera and GPS available</p>
+            </div>
+
+        </div>
+
+
+        <!-- DATA -->
+
+        <pre id="data"></pre>
+
+    </div>
+
+
+<script>
+
+
+// =========================
+// CAMERA
+// =========================
+
+let camera = document.getElementById("camera");
+
+
+function startCamera() {
+
+    navigator.mediaDevices.getUserMedia({
+
+        video: {
+            facingMode: "environment"
+        }
+
+    })
+
+    .then(function(stream) {
+
+        camera.srcObject = stream;
+
+    })
+
+    .catch(function(error) {
+
+        alert("Camera permission denied or camera not available.");
+
+    });
+
+}
+
+
+// =========================
+// TAKE PHOTO
+// =========================
+
+function takePhoto() {
+
+    let canvas = document.getElementById("photo");
+
+    let context = canvas.getContext("2d");
+
+
+    // Capture camera frame
+
+    canvas.width = camera.videoWidth;
+    canvas.height = camera.videoHeight;
+
+    context.drawImage(
+        camera,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+
+    // Convert image
+
+    let imageData = canvas.toDataURL("image/jpeg");
+
 
     // =========================
-    // CAMERA
+    // GET GPS
     // =========================
 
-    let camera = document.getElementById("camera");
+    navigator.geolocation.getCurrentPosition(
 
-    function startCamera() {
+        function(position) {
 
-        navigator.mediaDevices.getUserMedia({
+            let latitude = position.coords.latitude;
+            let longitude = position.coords.longitude;
 
-            video: {
-                facingMode: "environment"
-            }
-
-        })
-
-        .then(function(stream) {
-
-            camera.srcObject = stream;
-
-        })
-
-        .catch(function(error) {
-
-            alert("Camera permission denied or camera not available.");
-
-        });
-    }
+            let currentTime = new Date().toISOString();
 
 
-    // =========================
-    // TAKE PHOTO
-    // =========================
+            // Create pothole data
 
-    function takePhoto() {
+            let potholeData = {
 
-        let canvas = document.getElementById("photo");
+                image: imageData,
 
-        let context = canvas.getContext("2d");
+                latitude: latitude,
 
-        // Capture camera frame
-        context.drawImage(
-            camera,
-            0,
-            0,
-            canvas.width,
-            canvas.height
-        );
+                longitude: longitude,
+
+                time: currentTime
+
+            };
 
 
-        // Convert photo into data
-        let imageData = canvas.toDataURL("image/jpeg");
+            // Show location
+
+            document.getElementById("location").innerHTML =
+
+                "Latitude: " + latitude.toFixed(6) +
+                "<br>" +
+                "Longitude: " + longitude.toFixed(6);
 
 
-        // =========================
-        // GET GPS
-        // =========================
+            // Show time
 
-        navigator.geolocation.getCurrentPosition(
+            document.getElementById("time").innerHTML =
 
-            function(position) {
-
-                let latitude = position.coords.latitude;
-                let longitude = position.coords.longitude;
-
-                let currentTime = new Date().toISOString();
+                new Date().toLocaleString();
 
 
-                // =========================
-                // CREATE POTHOLE DATA
-                // =========================
+            // Show data in console
 
-                let potholeData = {
+            console.log(potholeData);
 
-                    image: imageData,
-
-                    latitude: latitude,
-
-                    longitude: longitude,
-
-                    time: currentTime
-
-                };
+        },
 
 
-                // Show location
-                document.getElementById("location").innerHTML =
-                    "Latitude: " + latitude +
-                    "<br>Longitude: " + longitude;
+        function(error) {
 
+            document.getElementById("location").innerHTML =
+                "❌ Could not get location.";
 
-                // Show time
-                document.getElementById("time").innerHTML =
-                    "Time: " + currentTime;
+        }
 
+    );
 
-                // Show complete data
-                document.getElementById("data").textContent =
-                    JSON.stringify(potholeData, null, 2);
+}
 
-
-                console.log(potholeData);
-            },
-
-
-            function(error) {
-
-                document.getElementById("location").innerHTML =
-                    "Could not get location.";
-
-            }
-        );
-    }
-
-    </script>
+</script>
 
 </body>
 </html>
