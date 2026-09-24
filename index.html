@@ -8,36 +8,111 @@
 
     <h1>Pothole Detection</h1>
 
+    <!-- GPS -->
     <button onclick="getLocation()">
         Get My Location
     </button>
 
     <p id="location">Location not found</p>
 
+
+    <!-- Camera -->
+    <h2>Camera</h2>
+
+    <video id="camera" width="300" autoplay playsinline></video>
+
+    <br><br>
+
+    <button onclick="startCamera()">
+        Start Camera
+    </button>
+
+    <button onclick="takePhoto()">
+        Take Photo
+    </button>
+
+    <br><br>
+
+    <canvas id="photo" width="300"></canvas>
+
+
     <script>
 
-        function getLocation() {
+    // =========================
+    // GPS
+    // =========================
 
-            navigator.geolocation.getCurrentPosition(
-                
-                function(position) {
+    function getLocation() {
 
-                    let latitude = position.coords.latitude;
-                    let longitude = position.coords.longitude;
+        navigator.geolocation.getCurrentPosition(
 
-                    document.getElementById("location").innerHTML =
-                        "Latitude: " + latitude +
-                        "<br>Longitude: " + longitude;
-                },
+            function(position) {
 
-                function(error) {
+                let latitude = position.coords.latitude;
+                let longitude = position.coords.longitude;
 
-                    document.getElementById("location").innerHTML =
-                        "Could not get location.";
-                }
-            );
+                document.getElementById("location").innerHTML =
+                    "Latitude: " + latitude +
+                    "<br>Longitude: " + longitude;
+            },
 
-        }
+            function(error) {
+
+                document.getElementById("location").innerHTML =
+                    "Could not get location.";
+            }
+        );
+    }
+
+
+    // =========================
+    // CAMERA
+    // =========================
+
+    let camera = document.getElementById("camera");
+
+    function startCamera() {
+
+        navigator.mediaDevices.getUserMedia({
+
+            video: {
+                facingMode: "environment"
+            }
+
+        })
+
+        .then(function(stream) {
+
+            camera.srcObject = stream;
+
+        })
+
+        .catch(function(error) {
+
+            alert("Camera permission denied or camera not available.");
+
+        });
+    }
+
+
+    // =========================
+    // TAKE PHOTO
+    // =========================
+
+    function takePhoto() {
+
+        let canvas = document.getElementById("photo");
+
+        let context = canvas.getContext("2d");
+
+        context.drawImage(
+            camera,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+    }
 
     </script>
 
