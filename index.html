@@ -8,7 +8,6 @@
 
     <h1>Pothole Detection</h1>
 
-    <!-- CAMERA -->
     <h2>Camera</h2>
 
     <video id="camera" width="300" autoplay playsinline></video>
@@ -27,7 +26,7 @@
 
     <canvas id="photo" width="300"></canvas>
 
-    <h3>Detection Information</h3>
+    <h3>Pothole Information</h3>
 
     <p id="location">
         Location not captured
@@ -36,6 +35,12 @@
     <p id="time">
         Time not captured
     </p>
+
+    <h3>Data Created</h3>
+
+    <pre id="data">
+No pothole data yet.
+    </pre>
 
 
     <script>
@@ -90,6 +95,10 @@
         );
 
 
+        // Convert photo into data
+        let imageData = canvas.toDataURL("image/jpeg");
+
+
         // =========================
         // GET GPS
         // =========================
@@ -101,21 +110,45 @@
                 let latitude = position.coords.latitude;
                 let longitude = position.coords.longitude;
 
+                let currentTime = new Date().toISOString();
+
+
+                // =========================
+                // CREATE POTHOLE DATA
+                // =========================
+
+                let potholeData = {
+
+                    image: imageData,
+
+                    latitude: latitude,
+
+                    longitude: longitude,
+
+                    time: currentTime
+
+                };
+
+
+                // Show location
                 document.getElementById("location").innerHTML =
                     "Latitude: " + latitude +
                     "<br>Longitude: " + longitude;
 
 
-                // =========================
-                // GET TIME
-                // =========================
-
-                let currentTime = new Date();
-
+                // Show time
                 document.getElementById("time").innerHTML =
-                    "Time: " + currentTime.toLocaleString();
+                    "Time: " + currentTime;
 
+
+                // Show complete data
+                document.getElementById("data").textContent =
+                    JSON.stringify(potholeData, null, 2);
+
+
+                console.log(potholeData);
             },
+
 
             function(error) {
 
