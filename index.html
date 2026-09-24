@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pothole Detector</title>
+</head>
+
+<body>
+
+    <h1>Pothole Detection</h1>
+
+    <button onclick="getLocation()">
+        Get My Location
+    </button>
+
+    <p id="location">Location not found</p>
+
+    <script>
+
+        function getLocation() {
+
+            navigator.geolocation.getCurrentPosition(
+                
+                function(position) {
+
+                    let latitude = position.coords.latitude;
+                    let longitude = position.coords.longitude;
+
+                    document.getElementById("location").innerHTML =
+                        "Latitude: " + latitude +
+                        "<br>Longitude: " + longitude;
+                },
+
+                function(error) {
+
+                    document.getElementById("location").innerHTML =
+                        "Could not get location.";
+                }
+            );
+
+        }
+
+    </script>
+
+</body>
+</html>
