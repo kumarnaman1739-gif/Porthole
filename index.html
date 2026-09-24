@@ -1,22 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Pothole Detector</title>
+    <title>Pothole Detection</title>
 </head>
 
 <body>
 
     <h1>Pothole Detection</h1>
 
-    <!-- GPS -->
-    <button onclick="getLocation()">
-        Get My Location
-    </button>
-
-    <p id="location">Location not found</p>
-
-
-    <!-- Camera -->
+    <!-- CAMERA -->
     <h2>Camera</h2>
 
     <video id="camera" width="300" autoplay playsinline></video>
@@ -35,35 +27,18 @@
 
     <canvas id="photo" width="300"></canvas>
 
+    <h3>Detection Information</h3>
+
+    <p id="location">
+        Location not captured
+    </p>
+
+    <p id="time">
+        Time not captured
+    </p>
+
 
     <script>
-
-    // =========================
-    // GPS
-    // =========================
-
-    function getLocation() {
-
-        navigator.geolocation.getCurrentPosition(
-
-            function(position) {
-
-                let latitude = position.coords.latitude;
-                let longitude = position.coords.longitude;
-
-                document.getElementById("location").innerHTML =
-                    "Latitude: " + latitude +
-                    "<br>Longitude: " + longitude;
-            },
-
-            function(error) {
-
-                document.getElementById("location").innerHTML =
-                    "Could not get location.";
-            }
-        );
-    }
-
 
     // =========================
     // CAMERA
@@ -105,12 +80,49 @@
 
         let context = canvas.getContext("2d");
 
+        // Capture camera frame
         context.drawImage(
             camera,
             0,
             0,
             canvas.width,
             canvas.height
+        );
+
+
+        // =========================
+        // GET GPS
+        // =========================
+
+        navigator.geolocation.getCurrentPosition(
+
+            function(position) {
+
+                let latitude = position.coords.latitude;
+                let longitude = position.coords.longitude;
+
+                document.getElementById("location").innerHTML =
+                    "Latitude: " + latitude +
+                    "<br>Longitude: " + longitude;
+
+
+                // =========================
+                // GET TIME
+                // =========================
+
+                let currentTime = new Date();
+
+                document.getElementById("time").innerHTML =
+                    "Time: " + currentTime.toLocaleString();
+
+            },
+
+            function(error) {
+
+                document.getElementById("location").innerHTML =
+                    "Could not get location.";
+
+            }
         );
     }
 
