@@ -2,7 +2,7 @@
 <html>
 <head>
 
-    <title>Pothole Detection</title>
+    <title>PotholeWatch</title>
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
@@ -10,115 +10,63 @@
 
 </head>
 
-
 <body>
 
-    <div class="app">
+<div class="app">
 
-        <!-- HEADER -->
+    <h1>🕳️ PotholeWatch</h1>
 
-        <div class="header">
-
-            <div>
-                <h1>🕳️ Pothole<span>Watch</span></h1>
-                <p>Road condition detection</p>
-            </div>
-
-            <div class="status-dot"></div>
-
-        </div>
+    <p class="subtitle">Road condition detection</p>
 
 
-        <!-- CAMERA -->
+    <!-- CAMERA / PHOTO -->
 
-        <div class="camera-card">
+    <div class="camera-box">
 
-            <video id="camera" autoplay playsinline></video>
+        <video id="camera" autoplay playsinline></video>
 
-            <div class="camera-label">
-                📷 Live Camera
-            </div>
-
-        </div>
-
-
-        <!-- CAMERA BUTTON -->
-
-        <button class="primary-button" onclick="startCamera()">
-            📷 Start Camera
-        </button>
-
-
-        <!-- LOCATION CARD -->
-
-        <div class="info-card">
-
-            <div class="card-title">
-                📍 Current Location
-            </div>
-
-            <p id="location">
-                Location not captured
-            </p>
-
-        </div>
-
-
-        <!-- PHOTO -->
-
-        <div class="photo-section">
-
-            <h2>Captured Image</h2>
-
-            <canvas id="photo"></canvas>
-
-        </div>
-
-
-        <!-- TAKE PHOTO -->
-
-        <button class="capture-button" onclick="takePhoto()">
-            <span>📸</span>
-            Detect Road
-        </button>
-
-
-        <!-- TIME -->
-
-        <div class="info-card">
-
-            <div class="card-title">
-                🕐 Detection Time
-            </div>
-
-            <p id="time">
-                Time not captured
-            </p>
-
-        </div>
-
-
-        <!-- STATUS -->
-
-        <div class="status-card">
-
-            <div class="status-icon">
-                ✓
-            </div>
-
-            <div>
-                <strong>System Ready</strong>
-                <p>Camera and GPS available</p>
-            </div>
-
-        </div>
-
-
-        <!-- DATA -->
-
-        <pre id="data"></pre>
+        <canvas id="photo"></canvas>
 
     </div>
+
+
+    <!-- BUTTONS -->
+
+    <button class="start-button" onclick="startCamera()">
+        📷 Start Camera
+    </button>
+
+    <button class="capture-button" onclick="takePhoto()">
+        📸 Take Photo
+    </button>
+
+
+    <!-- LOCATION -->
+
+    <div class="info">
+
+        <h3>📍 Location</h3>
+
+        <p id="location">
+            Not captured
+        </p>
+
+    </div>
+
+
+    <!-- TIME -->
+
+    <div class="info">
+
+        <h3>🕐 Time</h3>
+
+        <p id="time">
+            Not captured
+        </p>
+
+    </div>
+
+</div>
 
 
 <script>
@@ -129,6 +77,8 @@
 // =========================
 
 let camera = document.getElementById("camera");
+
+let photo = document.getElementById("photo");
 
 
 function startCamera() {
@@ -145,11 +95,17 @@ function startCamera() {
 
         camera.srcObject = stream;
 
+        // Show camera
+        camera.style.display = "block";
+
+        // Hide captured photo
+        photo.style.display = "none";
+
     })
 
     .catch(function(error) {
 
-        alert("Camera permission denied or camera not available.");
+        alert("Camera permission denied.");
 
     });
 
@@ -162,32 +118,48 @@ function startCamera() {
 
 function takePhoto() {
 
-    let canvas = document.getElementById("photo");
-
-    let context = canvas.getContext("2d");
+    let context = photo.getContext("2d");
 
 
-    // Capture camera frame
+    // Match photo size with camera
 
-    canvas.width = camera.videoWidth;
-    canvas.height = camera.videoHeight;
+    photo.width = camera.videoWidth;
+
+    photo.height = camera.videoHeight;
+
+
+    // Capture image
 
     context.drawImage(
+
         camera,
+
         0,
         0,
-        canvas.width,
-        canvas.height
+
+        photo.width,
+        photo.height
+
     );
+
+
+    // Hide live camera
+
+    camera.style.display = "none";
+
+
+    // Show captured photo
+
+    photo.style.display = "block";
 
 
     // Convert image
 
-    let imageData = canvas.toDataURL("image/jpeg");
+    let imageData = photo.toDataURL("image/jpeg");
 
 
     // =========================
-    // GET GPS
+    // GET LOCATION
     // =========================
 
     navigator.geolocation.getCurrentPosition(
@@ -195,6 +167,7 @@ function takePhoto() {
         function(position) {
 
             let latitude = position.coords.latitude;
+
             let longitude = position.coords.longitude;
 
             let currentTime = new Date().toISOString();
@@ -220,7 +193,9 @@ function takePhoto() {
             document.getElementById("location").innerHTML =
 
                 "Latitude: " + latitude.toFixed(6) +
+
                 "<br>" +
+
                 "Longitude: " + longitude.toFixed(6);
 
 
@@ -231,8 +206,6 @@ function takePhoto() {
                 new Date().toLocaleString();
 
 
-            // Show data in console
-
             console.log(potholeData);
 
         },
@@ -241,7 +214,8 @@ function takePhoto() {
         function(error) {
 
             document.getElementById("location").innerHTML =
-                "❌ Could not get location.";
+
+                "❌ Location unavailable";
 
         }
 
