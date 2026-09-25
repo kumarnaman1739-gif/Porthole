@@ -154,7 +154,7 @@ const CONFIDENCE_THRESHOLD =
     0.30;
 
 const VEHICLE_CONFIDENCE_THRESHOLD =
-    0.30;
+    0.18;
 
 const NMS_IOU_THRESHOLD =
     0.45;
@@ -193,10 +193,10 @@ const TRACK_LOST_TIME =
 // ============================================================
 
 const VEHICLE_TRACK_DISTANCE_PIXELS =
-    120;
+    180;
 
 const VEHICLE_TRACK_LOST_TIME =
-    1000;
+    2500;
 
 
 // ============================================================
@@ -733,188 +733,158 @@ async function detectFrame() {
 }
 
 
-// ============================================================
-// RUN ONNX INFERENCE
-// ============================================================
-
 async function runInference() {
 
-    const size =
-        INPUT_SIZE;
+    const size = INPUT_SIZE;
 
+    const inputCanvas = document.createElement("canvas");
+    inputCanvas.width = size;
+    inputCanvas.height = size;
 
-    const inputCanvas =
-        document.createElement(
-            "canvas"
-        );
+    const inputCtx = inputCanvas.getContext("2d");
 
+    const videoWidth = video.videoWidth;
+    const videoHeight = video.videoHeight;
 
-    inputCanvas.width =
-        size;
-
-    inputCanvas.height =
-        size;
-
-
-    const inputCtx =
-        inputCanvas.getContext(
-            "2d"
-        );
-
-
-    inputCtx.drawImage(
-
-        video,
-
-        0,
-        0,
-
-        size,
-        size
-
+    const scale = Math.min(
+        size / videoWidth,
+        size / videoHeight
     );
 
+    const resizedWidth = videoWidth * scale;
+    const resizedHeight = videoHeight * scale;
 
-    const imageData =
-        inputCtx.getImageData(
+    const padX = (size - resizedWidth) / 2;
+    const padY = (size - resizedHeight) / 2;
 
-            0,
-            0,
+    inputCtx.fillStyle = "rgb(114, 114, 114)";
+    inputCtx.fillRect(0, 0, size, size);
 
-            size,
-            size
+    inputCtx.drawImage(
+        video,
+        0,
+        0,
+        videoWidth,
+        videoHeight,
+        padX,
+        padY,
+        resizedWidth,
+        resizedHeight
+    );
 
-        );
+    const imageData = inputCtx.getImageData(
+        0,
+        0,
+        size,
+        size
+    );
 
+    const imageSize = size * size;
+    const inputData = new Float32Array(3 * imageSize);
 
-    const imageSize =
-        size * size;
+    for (let i = 0; i < imageSize; i++) {
 
-
-    const inputData =
-        new Float32Array(
-
-            3 * imageSize
-
-        );
-
-
-    // ========================================================
-    // RGBA → RGB
-    // ========================================================
-
-    for (
-
-        let i = 0;
-
-        i < imageSize;
-
-        i++
-
-    ) {
-
-        const pixel =
-            i * 4;
-
+        const pixel = i * 4;
 
         inputData[i] =
-            imageData.data[pixel] /
-            255.0;
+            imageData.data[pixel] / 255.0;
 
+        inputData[imageSize + i] =
+            imageData.data[pixel + 1] / 255.0;
 
-        inputData[
-            imageSize + i
-        ] =
-            imageData.data[pixel + 1] /
-            255.0;
-
-
-        inputData[
-            2 * imageSize + i
-        ] =
-            imageData.data[pixel + 2] /
-            255.0;
-
+        inputData[2 * imageSize + i] =
+            imageData.data[pixel + 2] / 255.0;
     }
 
+    const inputTensor = new ort.Tensor(
+        "float32",
+        inputData,
+        [1, 3, size, size]
+    );
 
-    const inputTensor =
-        new ort.Tensor(
+    const potholeOutputs = await session.run({
+        images: inputTensor
+    });
 
-            "float32",
-
-            inputData,
-
-            [
-                1,
-                3,
-                size,
-                size
-            ]
-
-        );
-
-
-    // ========================================================
-    // POTHOLE MODEL
-    // ========================================================
-
-    const potholeOutputs =
-        await session.run({
-
-            images:
-                inputTensor
-
-        });
-
-
-    const potholeOutput =
-        potholeOutputs.output0;
-
+    const potholeOutput = potholeOutputs.output0;
 
     const potholes =
-        parsePotholeDetections(
-            potholeOutput
-        );
+        parsePotholeDetections(potholeOutput);
 
+    const vehicleOutputs = await vehicleSession.run({
+        images: inputTensor
+    });
 
-    // ========================================================
-    // VEHICLE MODEL
-    // ========================================================
-
-    const vehicleOutputs =
-        await vehicleSession.run({
-
-            images:
-                inputTensor
-
-        });
-
-
-    const vehicleOutput =
-        vehicleOutputs.output0;
-
+    const vehicleOutput = vehicleOutputs.output0;
 
     const vehicles =
-        parseVehicleDetections(
-            vehicleOutput
-        );
+        parseVehicleDetections(vehicleOutput);
 
+    const fixCoordinates = (detections) => {
+
+        return detections
+            .map(detection => {
+
+                const originalX =
+                    (detection.x - padX) / scale;
+
+                const originalY =
+                    (detection.y - padY) / scale;
+
+                const originalWidth =
+                    detection.width / scale;
+
+                const originalHeight =
+                    detection.height / scale;
+
+                return {
+                    ...detection,
+
+                    x:
+                        originalX *
+                        size /
+                        videoWidth,
+
+                    y:
+                        originalY *
+                        size /
+                        videoHeight,
+
+                    width:
+                        originalWidth *
+                        size /
+                        videoWidth,
+
+                    height:
+                        originalHeight *
+                        size /
+                        videoHeight
+                };
+
+            })
+            .filter(detection => {
+
+                return (
+                    detection.x + detection.width > 0 &&
+                    detection.y + detection.height > 0 &&
+                    detection.x < size &&
+                    detection.y < size
+                );
+
+            });
+    };
 
     return {
-
         potholes:
             nonMaximumSuppression(
-                potholes
+                fixCoordinates(potholes)
             ),
 
         vehicles:
             vehicleNonMaximumSuppression(
-                vehicles
+                fixCoordinates(vehicles)
             )
-
     };
-
 }
 
 
