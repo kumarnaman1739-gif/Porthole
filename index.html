@@ -9,7 +9,6 @@
 
     <link rel="stylesheet" href="style.css">
 
-    <!-- ONNX Runtime Web -->
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 
     <style>
@@ -64,11 +63,9 @@
     </button>
 
     <div class="status">
-
         <span id="status">
-            Loading AI model...
+            Loading AI models...
         </span>
-
     </div>
 
     <div class="info">
@@ -77,6 +74,26 @@
 
         <p id="location">
             Waiting for GPS...
+        </p>
+
+    </div>
+
+    <div class="info">
+
+        <h3>🚗 Current 1 km Vehicle Count</h3>
+
+        <p id="vehicleCount">
+            0
+        </p>
+
+    </div>
+
+    <div class="info">
+
+        <h3>🛣️ Distance in Current Segment</h3>
+
+        <p id="segmentDistance">
+            0.00 km
         </p>
 
     </div>
@@ -150,6 +167,17 @@ const REPORT_INTERVAL =
 
 
 // ============================================================
+// GPS / TRAFFIC SETTINGS
+// ============================================================
+
+const LOCATION_INTERVAL =
+    5000;
+
+const VEHICLE_DISTANCE_TARGET_KM =
+    1.0;
+
+
+// ============================================================
 // POTHOLE TRACKING SETTINGS
 // ============================================================
 
@@ -158,6 +186,17 @@ const TRACK_DISTANCE_PIXELS =
 
 const TRACK_LOST_TIME =
     2000;
+
+
+// ============================================================
+// VEHICLE TRACKING SETTINGS
+// ============================================================
+
+const VEHICLE_TRACK_DISTANCE_PIXELS =
+    120;
+
+const VEHICLE_TRACK_LOST_TIME =
+    1000;
 
 
 // ============================================================
@@ -178,6 +217,12 @@ const statusText =
 
 const locationText =
     document.getElementById("location");
+
+const vehicleCountText =
+    document.getElementById("vehicleCount");
+
+const segmentDistanceText =
+    document.getElementById("segmentDistance");
 
 const reportCount =
     document.getElementById("reportCount");
@@ -212,6 +257,8 @@ let lastDetectionTime = 0;
 
 let gpsWatcher = null;
 
+let locationTimer = null;
+
 
 // ============================================================
 // POTHOLE TRACKING VARIABLES
@@ -220,6 +267,30 @@ let gpsWatcher = null;
 let potholeTracks = [];
 
 let nextTrackId = 1;
+
+
+// ============================================================
+// VEHICLE TRACKING VARIABLES
+// ============================================================
+
+let vehicleTracks = [];
+
+let nextVehicleTrackId = 1;
+
+
+// ============================================================
+// 1 KM VEHICLE SEGMENT VARIABLES
+// ============================================================
+
+let segmentStartLatitude = null;
+
+let segmentStartLongitude = null;
+
+let segmentDistanceKm = 0;
+
+let segmentVehicleIds = new Set();
+
+let nextVehicleSegmentId = 1;
 
 
 // ============================================================
@@ -248,10 +319,12 @@ async function loadModel() {
             "Pothole ONNX model loaded successfully"
         );
 
+
         console.log(
             "Pothole inputs:",
             session.inputNames
         );
+
 
         console.log(
             "Pothole outputs:",
@@ -273,10 +346,12 @@ async function loadModel() {
             "Vehicle ONNX model loaded successfully"
         );
 
+
         console.log(
             "Vehicle inputs:",
             vehicleSession.inputNames
         );
+
 
         console.log(
             "Vehicle outputs:",
@@ -398,11 +473,87 @@ async function startDetection() {
 
                     function(position) {
 
-                        latitude =
+                        const newLatitude =
                             position.coords.latitude;
 
-                        longitude =
+                        const newLongitude =
                             position.coords.longitude;
+
+
+                        // ------------------------------------
+                        // First GPS position
+                        // ------------------------------------
+
+                        if (
+                            latitude === null ||
+                            longitude === null
+                        ) {
+
+                            latitude =
+                                newLatitude;
+
+                            longitude =
+                                newLongitude;
+
+
+                            startNewVehicleSegment();
+
+                        }
+
+                        else {
+
+                            // --------------------------------
+                            // Calculate movement
+                            // --------------------------------
+
+                            const movementKm =
+                                calculateDistanceKm(
+
+                                    latitude,
+
+                                    longitude,
+
+                                    newLatitude,
+
+                                    newLongitude
+
+                                );
+
+
+                            latitude =
+                                newLatitude;
+
+                            longitude =
+                                newLongitude;
+
+
+                            if (
+                                movementKm > 0
+                            ) {
+
+                                segmentDistanceKm +=
+                                    movementKm;
+
+
+                                updateSegmentDistance();
+
+
+                                // ----------------------------
+                                // 1 KM COMPLETED
+                                // ----------------------------
+
+                                if (
+                                    segmentDistanceKm >=
+                                    VEHICLE_DISTANCE_TARGET_KM
+                                ) {
+
+                                    completeVehicleSegment();
+
+                                }
+
+                            }
+
+                        }
 
 
                         locationText.innerHTML =
@@ -423,6 +574,7 @@ async function startDetection() {
                             latitude,
                             longitude
                         );
+
 
                     },
 
@@ -464,6 +616,20 @@ async function startDetection() {
                 "❌ GPS not supported";
 
         }
+
+
+        // ====================================================
+        // LOCATION UPDATES EVERY 5 SECONDS
+        // ====================================================
+
+        locationTimer =
+            setInterval(
+
+                sendLocationUpdate,
+
+                LOCATION_INTERVAL
+
+            );
 
 
         // ====================================================
@@ -541,6 +707,11 @@ async function detectFrame() {
                 results.potholes
             );
 
+
+            updateVehicleTracks(
+                results.vehicles
+            );
+
         }
 
     }
@@ -590,8 +761,6 @@ async function runInference() {
             "2d"
         );
 
-
-    // Resize camera frame
 
     inputCtx.drawImage(
 
@@ -760,10 +929,8 @@ function parsePotholeDetections(
     const values =
         output.data;
 
-
     const numDetections =
         8400;
-
 
     const detections =
         [];
@@ -786,10 +953,8 @@ function parsePotholeDetections(
 
 
         if (
-
             confidence <
             CONFIDENCE_THRESHOLD
-
         ) {
 
             continue;
@@ -857,10 +1022,8 @@ function parseVehicleDetections(
     const data =
         output.data;
 
-
     const numDetections =
         8400;
-
 
     const numClasses =
         80;
@@ -927,10 +1090,6 @@ function parseVehicleDetections(
             0;
 
 
-        // ----------------------------------------------------
-        // Find highest vehicle class score
-        // ----------------------------------------------------
-
         for (
 
             let c = 0;
@@ -950,10 +1109,8 @@ function parseVehicleDetections(
 
 
             if (
-
                 confidence >
                 bestConfidence
-
             ) {
 
                 bestConfidence =
@@ -966,10 +1123,6 @@ function parseVehicleDetections(
 
         }
 
-
-        // ----------------------------------------------------
-        // Keep only vehicle classes
-        // ----------------------------------------------------
 
         if (
 
@@ -1020,7 +1173,7 @@ function parseVehicleDetections(
 
 
 // ============================================================
-// VEHICLE NON-MAXIMUM SUPPRESSION
+// VEHICLE NMS
 // ============================================================
 
 function vehicleNonMaximumSuppression(
@@ -1041,9 +1194,7 @@ function vehicleNonMaximumSuppression(
 
 
     while (
-
         detections.length > 0
-
     ) {
 
         const current =
@@ -1077,7 +1228,7 @@ function vehicleNonMaximumSuppression(
 
 
 // ============================================================
-// NON-MAXIMUM SUPPRESSION
+// POTHOLE NMS
 // ============================================================
 
 function nonMaximumSuppression(
@@ -1098,9 +1249,7 @@ function nonMaximumSuppression(
 
 
     while (
-
         detections.length > 0
-
     ) {
 
         const current =
@@ -1178,21 +1327,15 @@ function calculateIoU(
 
     const intersectionWidth =
         Math.max(
-
             0,
-
             x2 - x1
-
         );
 
 
     const intersectionHeight =
         Math.max(
-
             0,
-
             y2 - y1
-
         );
 
 
@@ -1250,10 +1393,6 @@ function drawDetections(
         results.vehicles;
 
 
-    // ========================================================
-    // CAMERA OVERLAY SIZE
-    // ========================================================
-
     if (
 
         canvas.width !==
@@ -1296,14 +1435,12 @@ function drawDetections(
 
 
     // ========================================================
-    // DRAW VEHICLES
+    // VEHICLES
     // ========================================================
 
     for (
-
         const detection of
         vehicles
-
     ) {
 
         const x =
@@ -1335,13 +1472,10 @@ function drawDetections(
 
 
         ctx.strokeRect(
-
             x,
             y,
-
             width,
             height
-
         );
 
 
@@ -1380,14 +1514,12 @@ function drawDetections(
 
 
     // ========================================================
-    // DRAW POTHOLES
+    // POTHOLES
     // ========================================================
 
     for (
-
         const detection of
         potholes
-
     ) {
 
         const x =
@@ -1419,13 +1551,10 @@ function drawDetections(
 
 
         ctx.strokeRect(
-
             x,
             y,
-
             width,
             height
-
         );
 
 
@@ -1456,6 +1585,556 @@ function drawDetections(
                 20,
                 y - 5
             )
+
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// VEHICLE TRACKING
+// ============================================================
+
+function updateVehicleTracks(
+    detections
+) {
+
+    const now =
+        Date.now();
+
+
+    const matchedTracks =
+        new Set();
+
+
+    for (
+        const detection of
+        detections
+    ) {
+
+        let closestTrack =
+            null;
+
+
+        let closestDistance =
+            VEHICLE_TRACK_DISTANCE_PIXELS + 1;
+
+
+        for (
+            const track of
+            vehicleTracks
+        ) {
+
+            if (
+                matchedTracks.has(
+                    track.id
+                )
+            ) {
+
+                continue;
+
+            }
+
+
+            const distance =
+                getDetectionDistance(
+
+                    detection,
+
+                    track.lastDetection
+
+                );
+
+
+            if (
+                distance <
+                closestDistance
+            ) {
+
+                closestDistance =
+                    distance;
+
+                closestTrack =
+                    track;
+
+            }
+
+        }
+
+
+        if (
+            closestTrack !== null
+        ) {
+
+            closestTrack.lastDetection =
+                detection;
+
+
+            closestTrack.lastSeen =
+                now;
+
+        }
+
+        else {
+
+            const newTrack = {
+
+                id:
+                    nextVehicleTrackId++,
+
+                segmentId:
+                    nextVehicleSegmentId++,
+
+                lastDetection:
+                    detection,
+
+                firstSeen:
+                    now,
+
+                lastSeen:
+                    now,
+
+                className:
+                    detection.className
+
+            };
+
+
+            vehicleTracks.push(
+                newTrack
+            );
+
+
+            // ----------------------------------------------
+            // Count this vehicle once for current 1-km
+            // segment
+            // ----------------------------------------------
+
+            segmentVehicleIds.add(
+                newTrack.segmentId
+            );
+
+
+            updateVehicleCount();
+
+        }
+
+    }
+
+
+    vehicleTracks =
+        vehicleTracks.filter(
+
+            track =>
+
+                now -
+                track.lastSeen
+                <
+                VEHICLE_TRACK_LOST_TIME
+
+        );
+
+}
+
+
+// ============================================================
+// VEHICLE COUNT DISPLAY
+// ============================================================
+
+function updateVehicleCount() {
+
+    vehicleCountText.innerText =
+        segmentVehicleIds.size;
+
+}
+
+
+// ============================================================
+// START NEW 1 KM SEGMENT
+// ============================================================
+
+function startNewVehicleSegment() {
+
+    segmentStartLatitude =
+        latitude;
+
+    segmentStartLongitude =
+        longitude;
+
+    segmentDistanceKm =
+        0;
+
+    segmentVehicleIds =
+        new Set();
+
+    vehicleTracks =
+        [];
+
+    updateVehicleCount();
+
+    updateSegmentDistance();
+
+    console.log(
+        "🛣️ New 1 km vehicle segment started."
+    );
+
+}
+
+
+// ============================================================
+// COMPLETE 1 KM VEHICLE SEGMENT
+// ============================================================
+
+function completeVehicleSegment() {
+
+    if (
+        latitude === null ||
+        longitude === null
+    ) {
+
+        return;
+
+    }
+
+
+    const vehicleCount =
+        segmentVehicleIds.size;
+
+
+    const report = {
+
+        bus_id:
+            BUS_ID,
+
+        latitude:
+            Number(
+                latitude.toFixed(6)
+            ),
+
+        longitude:
+            Number(
+                longitude.toFixed(6)
+            ),
+
+        vehicle_count:
+            vehicleCount,
+
+        timestamp:
+            new Date().toISOString()
+
+    };
+
+
+    console.log(
+        "🚗 1 km vehicle report:",
+        report
+    );
+
+
+    sendVehicleReport(
+        report
+    );
+
+
+    // --------------------------------------------------------
+    // Start next 1 km segment
+    // --------------------------------------------------------
+
+    segmentDistanceKm =
+        0;
+
+    segmentVehicleIds =
+        new Set();
+
+    vehicleTracks =
+        [];
+
+    updateVehicleCount();
+
+    updateSegmentDistance();
+
+
+    segmentStartLatitude =
+        latitude;
+
+    segmentStartLongitude =
+        longitude;
+
+}
+
+
+// ============================================================
+// DISTANCE BETWEEN GPS COORDINATES
+// ============================================================
+
+function calculateDistanceKm(
+    lat1,
+    lon1,
+    lat2,
+    lon2
+) {
+
+    const earthRadiusKm =
+        6371;
+
+
+    const dLat =
+        degreesToRadians(
+            lat2 - lat1
+        );
+
+
+    const dLon =
+        degreesToRadians(
+            lon2 - lon1
+        );
+
+
+    const a =
+
+        Math.sin(dLat / 2) *
+        Math.sin(dLat / 2)
+
+        +
+
+        Math.cos(
+            degreesToRadians(lat1)
+        ) *
+
+        Math.cos(
+            degreesToRadians(lat2)
+        ) *
+
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+
+
+    const c =
+        2 *
+        Math.atan2(
+
+            Math.sqrt(a),
+
+            Math.sqrt(1 - a)
+
+        );
+
+
+    return (
+        earthRadiusKm *
+        c
+    );
+
+}
+
+
+// ============================================================
+// DEGREES → RADIANS
+// ============================================================
+
+function degreesToRadians(
+    degrees
+) {
+
+    return (
+        degrees *
+        Math.PI /
+        180
+    );
+
+}
+
+
+// ============================================================
+// SEGMENT DISTANCE DISPLAY
+// ============================================================
+
+function updateSegmentDistance() {
+
+    segmentDistanceText.innerText =
+
+        segmentDistanceKm.toFixed(2) +
+        " km";
+
+}
+
+
+// ============================================================
+// SEND LOCATION EVERY 5 SECONDS
+// ============================================================
+
+async function sendLocationUpdate() {
+
+    if (
+        latitude === null ||
+        longitude === null
+    ) {
+
+        console.log(
+            "📍 Location not ready yet."
+        );
+
+        return;
+
+    }
+
+
+    const locationReport = {
+
+        bus_id:
+            BUS_ID,
+
+        latitude:
+            Number(
+                latitude.toFixed(6)
+            ),
+
+        longitude:
+            Number(
+                longitude.toFixed(6)
+            ),
+
+        timestamp:
+            new Date().toISOString()
+
+    };
+
+
+    console.log(
+        "📍 Sending location:",
+        locationReport
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+
+                API_URL,
+
+                {
+
+                    method:
+                        "POST",
+
+                    headers: {
+
+                        "Content-Type":
+                            "application/json"
+
+                    },
+
+                    body:
+                        JSON.stringify(
+                            locationReport
+                        )
+
+                }
+
+            );
+
+
+        if (
+            !response.ok
+        ) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+
+        }
+
+
+        console.log(
+            "✅ Location sent"
+        );
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "❌ Location update failed:",
+            error
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// SEND VEHICLE REPORT
+// ============================================================
+
+async function sendVehicleReport(
+    report
+) {
+
+    try {
+
+        const response =
+            await fetch(
+
+                API_URL,
+
+                {
+
+                    method:
+                        "POST",
+
+                    headers: {
+
+                        "Content-Type":
+                            "application/json"
+
+                    },
+
+                    body:
+                        JSON.stringify(
+                            report
+                        )
+
+                }
+
+            );
+
+
+        if (
+            !response.ok
+        ) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+
+        }
+
+
+        console.log(
+            "✅ 1 km vehicle report sent:",
+            report
+        );
+
+
+        lastSent.innerText =
+            new Date()
+                .toLocaleString();
+
+    }
+
+    catch (error) {
+
+        console.error(
+
+            "❌ Vehicle report failed:",
+
+            error
 
         );
 
@@ -1545,10 +2224,8 @@ function updatePotholeTracks(
 
 
     for (
-
         const detection of
         detections
-
     ) {
 
         let closestTrack =
@@ -1560,18 +2237,14 @@ function updatePotholeTracks(
 
 
         for (
-
             const track of
             potholeTracks
-
         ) {
 
             if (
-
                 matchedTracks.has(
                     track.id
                 )
-
             ) {
 
                 continue;
@@ -1590,10 +2263,8 @@ function updatePotholeTracks(
 
 
             if (
-
                 distance <
                 closestDistance
-
             ) {
 
                 closestDistance =
@@ -1716,9 +2387,7 @@ function handleNewPothole(
 
 
     createPotholeReport(
-
         track.confidence
-
     );
 
 }
@@ -1740,12 +2409,8 @@ function createPotholeReport(
     ) {
 
         console.log(
-
-            "Pothole detected, " +
-            "but GPS is not ready."
-
+            "Pothole detected, but GPS is not ready."
         );
-
 
         return;
 
@@ -1884,7 +2549,7 @@ function addDetectionToLog(
 
 
 // ============================================================
-// SEND REPORTS EVERY 60 SECONDS
+// SEND POTHOLE REPORTS EVERY 60 SECONDS
 // ============================================================
 
 setInterval(
@@ -1897,21 +2562,18 @@ setInterval(
 
 
 // ============================================================
-// SEND REPORTS TO API
+// SEND POTHOLE REPORTS TO API
 // ============================================================
 
 async function sendReports() {
 
     if (
-
         pendingReports.length === 0
-
     ) {
 
         console.log(
-            "No reports to send."
+            "No pothole reports to send."
         );
-
 
         return;
 
@@ -1925,19 +2587,14 @@ async function sendReports() {
 
 
     console.log(
-
-        "🚀 Sending reports:",
-
+        "🚀 Sending pothole reports:",
         reportsToSend
-
     );
 
 
     for (
-
         const report of
         reportsToSend
-
     ) {
 
         try {
@@ -1974,21 +2631,16 @@ async function sendReports() {
             ) {
 
                 throw new Error(
-
                     "HTTP " +
                     response.status
-
                 );
 
             }
 
 
             console.log(
-
-                "✅ Report sent:",
-
+                "✅ Pothole report sent:",
                 report
-
             );
 
 
@@ -2003,11 +2655,8 @@ async function sendReports() {
             ) {
 
                 pendingReports.splice(
-
                     index,
-
                     1
-
                 );
 
             }
@@ -2022,12 +2671,11 @@ async function sendReports() {
 
         }
 
-
         catch (error) {
 
             console.error(
 
-                "❌ Failed to send report:",
+                "❌ Failed to send pothole report:",
 
                 error
 
@@ -2035,11 +2683,8 @@ async function sendReports() {
 
 
             console.log(
-
                 "Report kept for retry:",
-
                 report
-
             );
 
         }
