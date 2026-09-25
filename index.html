@@ -1,9 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>PotholeWatch</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>PotholeWatch</title>
+
     <link rel="stylesheet" href="style.css">
+
+    <!-- ONNX Runtime Web -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 </head>
 
 <body>
@@ -11,18 +17,22 @@
 <div class="app">
 
     <h1>🕳️ PotholeWatch</h1>
-    <p class="subtitle">Live road condition detection</p>
+    <p class="subtitle">Live AI road condition detection</p>
 
     <div class="camera-box">
         <video id="camera" autoplay playsinline></video>
+        <canvas id="overlay"></canvas>
     </div>
 
-    <button class="start-button" onclick="startDetection()">
+    <button
+        class="start-button"
+        id="startButton"
+        onclick="startDetection()">
         📹 Start Live Detection
     </button>
 
     <div class="status">
-        <span id="status">Detection stopped</span>
+        <span id="status">Loading AI model...</span>
     </div>
 
     <div class="info">
@@ -31,105 +41,1160 @@
     </div>
 
     <div class="info">
-        <h3>🕐 Last Detection</h3>
-        <p id="time">No detection yet</p>
+        <h3>🕐 Last Report Sent</h3>
+        <p id="lastSent">Nothing sent yet</p>
+    </div>
+
+    <div class="info">
+        <h3>📦 Reports Waiting</h3>
+        <p id="reportCount">0</p>
+    </div>
+
+    <div class="info">
+        <h3>🕳️ Detection Log</h3>
+        <div id="reportLog"></div>
     </div>
 
 </div>
 
+
 <script>
 
-let camera = document.getElementById("camera");
+// ============================================================
+// SETTINGS
+// ============================================================
+
+const MODEL_PATH = "model/best.onnx";
+
+const API_URL =
+    "https://bus2city-ai.onrender.com/reports";
+
+const BUS_ID = "BUS_01";
+
+const INPUT_SIZE = 640;
+
+// Minimum confidence required to record a pothole
+const CONFIDENCE_THRESHOLD = 0.30;
+
+// Non-Maximum Suppression threshold
+const NMS_IOU_THRESHOLD = 0.45;
+
+// Prevent repeated reports every frame
+const DETECTION_COOLDOWN = 3000;
+
+// Send collected reports every 60 seconds
+const REPORT_INTERVAL = 60000;
+
+
+// ============================================================
+// HTML ELEMENTS
+// ============================================================
+
+const video =
+    document.getElementById("camera");
+
+const canvas =
+    document.getElementById("overlay");
+
+const ctx =
+    canvas.getContext("2d");
+
+const statusText =
+    document.getElementById("status");
+
+const locationText =
+    document.getElementById("location");
+
+const reportCount =
+    document.getElementById("reportCount");
+
+const lastSent =
+    document.getElementById("lastSent");
+
+const reportLog =
+    document.getElementById("reportLog");
+
+const startButton =
+    document.getElementById("startButton");
+
+
+// ============================================================
+// VARIABLES
+// ============================================================
+
+let session = null;
 
 let latitude = null;
 let longitude = null;
 
+let detectionRunning = false;
+
+let pendingReports = [];
+
+let lastDetectionTime = 0;
+
 let gpsWatcher = null;
-let detectionInterval = null;
 
 
-// START CAMERA + GPS
-function startDetection() {
+// ============================================================
+// LOAD MODEL
+// ============================================================
 
-    // Start camera
-    navigator.mediaDevices.getUserMedia({
-        video: {
-            facingMode: "environment"
+async function loadModel() {
+
+    try {
+
+        statusText.innerText =
+            "Loading ONNX model...";
+
+        session =
+            await ort.InferenceSession.create(
+                MODEL_PATH
+            );
+
+        console.log(
+            "ONNX model loaded successfully"
+        );
+
+        console.log(
+            "Inputs:",
+            session.inputNames
+        );
+
+        console.log(
+            "Outputs:",
+            session.outputNames
+        );
+
+        statusText.innerText =
+            "🟢 AI model loaded - ready";
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Model loading error:",
+            error
+        );
+
+        statusText.innerText =
+            "❌ AI model failed to load";
+
+    }
+
+}
+
+
+// ============================================================
+// START CAMERA + GPS + DETECTION
+// ============================================================
+
+async function startDetection() {
+
+    if (!session) {
+
+        alert(
+            "AI model is still loading."
+        );
+
+        return;
+
+    }
+
+
+    if (detectionRunning) {
+
+        return;
+
+    }
+
+
+    try {
+
+        // -------------------------------
+        // CAMERA
+        // -------------------------------
+
+        const stream =
+            await navigator.mediaDevices
+                .getUserMedia({
+
+                    video: {
+                        facingMode: {
+                            ideal: "environment"
+                        }
+                    },
+
+                    audio: false
+
+                });
+
+
+        video.srcObject = stream;
+
+        await video.play();
+
+
+        canvas.width =
+            video.videoWidth;
+
+        canvas.height =
+            video.videoHeight;
+
+
+        // -------------------------------
+        // GPS
+        // -------------------------------
+
+        if ("geolocation" in navigator) {
+
+            gpsWatcher =
+                navigator.geolocation.watchPosition(
+
+                    function(position) {
+
+                        latitude =
+                            position.coords.latitude;
+
+                        longitude =
+                            position.coords.longitude;
+
+
+                        locationText.innerHTML =
+                            "Latitude: " +
+                            latitude.toFixed(6) +
+                            "<br>" +
+                            "Longitude: " +
+                            longitude.toFixed(6);
+
+
+                        console.log(
+                            "GPS:",
+                            latitude,
+                            longitude
+                        );
+
+                    },
+
+                    function(error) {
+
+                        console.error(
+                            "GPS error:",
+                            error
+                        );
+
+                        locationText.innerText =
+                            "❌ GPS unavailable";
+
+                    },
+
+                    {
+
+                        enableHighAccuracy: true,
+
+                        maximumAge: 0,
+
+                        timeout: 10000
+
+                    }
+
+                );
+
         }
-    })
-    .then(function(stream) {
 
-        camera.srcObject = stream;
+        else {
 
-        document.getElementById("status").innerHTML =
-            "🟢 Live detection running";
+            locationText.innerText =
+                "❌ GPS not supported";
 
-    })
-    .catch(function(error) {
-
-        alert("Camera permission denied.");
-
-        console.log(error);
-    });
-
-
-    // Start GPS tracking
-    gpsWatcher = navigator.geolocation.watchPosition(
-
-        function(position) {
-
-            latitude = position.coords.latitude;
-            longitude = position.coords.longitude;
-
-            document.getElementById("location").innerHTML =
-                "Latitude: " + latitude.toFixed(6) +
-                "<br>" +
-                "Longitude: " + longitude.toFixed(6);
-
-        },
-
-        function(error) {
-
-            document.getElementById("location").innerHTML =
-                "❌ GPS unavailable";
-
-            console.log(error);
-
-        },
-
-        {
-            enableHighAccuracy: true,
-            maximumAge: 0,
-            timeout: 10000
         }
 
+
+        // -------------------------------
+        // START DETECTION
+        // -------------------------------
+
+        detectionRunning = true;
+
+
+        statusText.innerText =
+            "🟢 Live AI detection running";
+
+
+        startButton.innerText =
+            "🟢 Detection Running";
+
+
+        detectFrame();
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Camera error:",
+            error
+        );
+
+        alert(
+            "Could not start camera."
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// DETECTION LOOP
+// ============================================================
+
+async function detectFrame() {
+
+    if (!detectionRunning) {
+
+        return;
+
+    }
+
+
+    try {
+
+        if (
+            video.readyState >= 2 &&
+            video.videoWidth > 0
+        ) {
+
+            const detections =
+                await runInference();
+
+
+            drawDetections(
+                detections
+            );
+
+
+            if (
+                detections.length > 0
+            ) {
+
+                handlePotholeDetection(
+                    detections
+                );
+
+            }
+
+        }
+
+    }
+
+    catch (error) {
+
+        console.error(
+            "Detection error:",
+            error
+        );
+
+    }
+
+
+    requestAnimationFrame(
+        detectFrame
+    );
+
+}
+
+
+// ============================================================
+// RUN ONNX INFERENCE
+// ============================================================
+
+async function runInference() {
+
+    const size =
+        INPUT_SIZE;
+
+
+    const inputCanvas =
+        document.createElement(
+            "canvas"
+        );
+
+
+    inputCanvas.width =
+        size;
+
+    inputCanvas.height =
+        size;
+
+
+    const inputCtx =
+        inputCanvas.getContext(
+            "2d"
+        );
+
+
+    // Resize camera frame
+    // to 640 x 640
+
+    inputCtx.drawImage(
+        video,
+        0,
+        0,
+        size,
+        size
     );
 
 
-    // FOR NOW:
-    // Assume a pothole is detected every second
+    const imageData =
+        inputCtx.getImageData(
+            0,
+            0,
+            size,
+            size
+        );
 
-    detectionInterval = setInterval(function() {
 
-        if (latitude !== null && longitude !== null) {
+    const imageSize =
+        size * size;
 
-            let currentTime = new Date();
 
-            document.getElementById("time").innerHTML =
-                currentTime.toLocaleString();
+    const inputData =
+        new Float32Array(
+            3 * imageSize
+        );
 
-            console.log({
-                pothole: true,
-                latitude: latitude,
-                longitude: longitude,
-                time: currentTime.toISOString()
-            });
+
+    // Convert RGBA → RGB
+    // and normalize 0-255 → 0-1
+
+    for (
+        let i = 0;
+        i < imageSize;
+        i++
+    ) {
+
+        const pixel =
+            i * 4;
+
+
+        inputData[i] =
+            imageData.data[pixel] /
+            255.0;
+
+
+        inputData[
+            imageSize + i
+        ] =
+            imageData.data[pixel + 1] /
+            255.0;
+
+
+        inputData[
+            2 * imageSize + i
+        ] =
+            imageData.data[pixel + 2] /
+            255.0;
+
+    }
+
+
+    const inputTensor =
+        new ort.Tensor(
+
+            "float32",
+
+            inputData,
+
+            [
+                1,
+                3,
+                size,
+                size
+            ]
+
+        );
+
+
+    const outputs =
+        await session.run({
+
+            images:
+                inputTensor
+
+        });
+
+
+    const output =
+        outputs.output0;
+
+
+    const values =
+        output.data;
+
+
+    const numDetections =
+        8400;
+
+
+    const detections = [];
+
+
+    // ========================================================
+    // READ YOLO OUTPUT
+    // ========================================================
+
+    for (
+        let i = 0;
+        i < numDetections;
+        i++
+    ) {
+
+        const confidence =
+            values[
+                4 * numDetections + i
+            ];
+
+
+        // Ignore detections
+        // below 30%
+
+        if (
+            confidence <
+            CONFIDENCE_THRESHOLD
+        ) {
+
+            continue;
 
         }
 
-    }, 1000);
+
+        const cx =
+            values[i];
+
+        const cy =
+            values[
+                numDetections + i
+            ];
+
+        const width =
+            values[
+                2 * numDetections + i
+            ];
+
+        const height =
+            values[
+                3 * numDetections + i
+            ];
+
+
+        detections.push({
+
+            x:
+                cx - width / 2,
+
+            y:
+                cy - height / 2,
+
+            width:
+                width,
+
+            height:
+                height,
+
+            confidence:
+                confidence
+
+        });
+
+    }
+
+
+    return nonMaximumSuppression(
+        detections
+    );
 
 }
+
+
+// ============================================================
+// NON-MAXIMUM SUPPRESSION
+// ============================================================
+
+function nonMaximumSuppression(
+    detections
+) {
+
+    detections.sort(
+        (a, b) =>
+            b.confidence -
+            a.confidence
+    );
+
+
+    const selected = [];
+
+
+    while (
+        detections.length > 0
+    ) {
+
+        const current =
+            detections.shift();
+
+
+        selected.push(
+            current
+        );
+
+
+        detections =
+            detections.filter(
+
+                candidate =>
+                    calculateIoU(
+                        current,
+                        candidate
+                    ) <
+                    NMS_IOU_THRESHOLD
+
+            );
+
+    }
+
+
+    return selected;
+
+}
+
+
+// ============================================================
+// IOU
+// ============================================================
+
+function calculateIoU(
+    a,
+    b
+) {
+
+    const x1 =
+        Math.max(
+            a.x,
+            b.x
+        );
+
+
+    const y1 =
+        Math.max(
+            a.y,
+            b.y
+        );
+
+
+    const x2 =
+        Math.min(
+            a.x + a.width,
+            b.x + b.width
+        );
+
+
+    const y2 =
+        Math.min(
+            a.y + a.height,
+            b.y + b.height
+        );
+
+
+    const intersectionWidth =
+        Math.max(
+            0,
+            x2 - x1
+        );
+
+
+    const intersectionHeight =
+        Math.max(
+            0,
+            y2 - y1
+        );
+
+
+    const intersection =
+        intersectionWidth *
+        intersectionHeight;
+
+
+    const areaA =
+        a.width *
+        a.height;
+
+
+    const areaB =
+        b.width *
+        b.height;
+
+
+    const union =
+        areaA +
+        areaB -
+        intersection;
+
+
+    if (
+        union <= 0
+    ) {
+
+        return 0;
+
+    }
+
+
+    return (
+        intersection /
+        union
+    );
+
+}
+
+
+// ============================================================
+// DRAW DETECTIONS
+// ============================================================
+
+function drawDetections(
+    detections
+) {
+
+    if (
+        canvas.width !==
+        video.videoWidth
+    ) {
+
+        canvas.width =
+            video.videoWidth;
+
+        canvas.height =
+            video.videoHeight;
+
+    }
+
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+
+    const scaleX =
+        canvas.width /
+        INPUT_SIZE;
+
+
+    const scaleY =
+        canvas.height /
+        INPUT_SIZE;
+
+
+    for (
+        const detection of detections
+    ) {
+
+        const x =
+            detection.x *
+            scaleX;
+
+
+        const y =
+            detection.y *
+            scaleY;
+
+
+        const width =
+            detection.width *
+            scaleX;
+
+
+        const height =
+            detection.height *
+            scaleY;
+
+
+        ctx.strokeStyle =
+            "red";
+
+
+        ctx.lineWidth =
+            4;
+
+
+        ctx.strokeRect(
+            x,
+            y,
+            width,
+            height
+        );
+
+
+        ctx.fillStyle =
+            "red";
+
+
+        ctx.font =
+            "18px Arial";
+
+
+        const percentage =
+            (
+                detection.confidence *
+                100
+            ).toFixed(1);
+
+
+        ctx.fillText(
+
+            "Pothole " +
+            percentage +
+            "%",
+
+            x,
+
+            Math.max(
+                20,
+                y - 5
+            )
+
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// HANDLE POTHOLE
+// ============================================================
+
+function handlePotholeDetection(
+    detections
+) {
+
+    // GPS must be available
+
+    if (
+        latitude === null ||
+        longitude === null
+    ) {
+
+        console.log(
+            "Pothole detected, " +
+            "but GPS is not ready."
+        );
+
+        return;
+
+    }
+
+
+    const now =
+        Date.now();
+
+
+    // Prevent repeated
+    // detections within 3 seconds
+
+    if (
+        now -
+        lastDetectionTime <
+        DETECTION_COOLDOWN
+    ) {
+
+        return;
+
+    }
+
+
+    lastDetectionTime =
+        now;
+
+
+    // Pick highest-confidence
+    // detection
+
+    const bestDetection =
+        detections.reduce(
+
+            (
+                best,
+                current
+            ) =>
+
+                current.confidence >
+                best.confidence
+
+                    ? current
+                    : best
+
+        );
+
+
+    // ========================================================
+    // REPORT PACKET
+    // ========================================================
+
+    const report = {
+
+        bus_id:
+            BUS_ID,
+
+        latitude:
+            Number(
+                latitude.toFixed(6)
+            ),
+
+        longitude:
+            Number(
+                longitude.toFixed(6)
+            ),
+
+        confidence:
+            Number(
+                bestDetection
+                    .confidence
+                    .toFixed(2)
+            )
+
+    };
+
+
+    pendingReports.push(
+        report
+    );
+
+
+    updateReportCount();
+
+
+    addDetectionToLog(
+        report
+    );
+
+
+    console.log(
+        "📦 Report collected:",
+        report
+    );
+
+}
+
+
+// ============================================================
+// UPDATE REPORT COUNT
+// ============================================================
+
+function updateReportCount() {
+
+    reportCount.innerText =
+        pendingReports.length;
+
+}
+
+
+// ============================================================
+// DETECTION LOG
+// ============================================================
+
+function addDetectionToLog(
+    report
+) {
+
+    const div =
+        document.createElement(
+            "div"
+        );
+
+
+    div.style.padding =
+        "8px 0";
+
+
+    div.style.borderBottom =
+        "1px solid #444";
+
+
+    div.innerHTML =
+
+        "🕳️ Pothole detected" +
+
+        "<br>📍 " +
+
+        report.latitude +
+
+        ", " +
+
+        report.longitude +
+
+        "<br>🎯 Confidence: " +
+
+        (
+            report.confidence *
+            100
+        ).toFixed(0) +
+
+        "%";
+
+
+    reportLog.prepend(
+        div
+    );
+
+}
+
+
+// ============================================================
+// SEND REPORTS EVERY 60 SECONDS
+// ============================================================
+
+setInterval(
+    sendReports,
+    REPORT_INTERVAL
+);
+
+
+// ============================================================
+// SEND REPORTS TO API
+// ============================================================
+
+async function sendReports() {
+
+    if (
+        pendingReports.length === 0
+    ) {
+
+        console.log(
+            "No reports to send."
+        );
+
+        return;
+
+    }
+
+
+    const reportsToSend =
+        [
+            ...pendingReports
+        ];
+
+
+    console.log(
+        "🚀 Sending reports:",
+        reportsToSend
+    );
+
+
+    for (
+        const report of
+        reportsToSend
+    ) {
+
+        try {
+
+            const response =
+                await fetch(
+                    API_URL,
+                    {
+
+                        method:
+                            "POST",
+
+                        headers: {
+
+                            "Content-Type":
+                                "application/json"
+
+                        },
+
+                        body:
+                            JSON.stringify(
+                                report
+                            )
+
+                    }
+                );
+
+
+            if (
+                !response.ok
+            ) {
+
+                throw new Error(
+                    "HTTP " +
+                    response.status
+                );
+
+            }
+
+
+            console.log(
+                "✅ Report sent:",
+                report
+            );
+
+
+            const index =
+                pendingReports.indexOf(
+                    report
+                );
+
+
+            if (
+                index !== -1
+            ) {
+
+                pendingReports.splice(
+                    index,
+                    1
+                );
+
+            }
+
+
+            lastSent.innerText =
+                new Date()
+                    .toLocaleString();
+
+
+            updateReportCount();
+
+        }
+
+        catch (error) {
+
+            console.error(
+                "❌ Failed to send report:",
+                error
+            );
+
+
+            console.log(
+                "Report kept for retry:",
+                report
+            );
+
+        }
+
+    }
+
+}
+
+
+// ============================================================
+// LOAD AI MODEL
+// ============================================================
+
+loadModel();
 
 </script>
 
