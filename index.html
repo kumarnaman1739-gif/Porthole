@@ -13,10 +13,6 @@
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 
     <style>
-        /* =====================================================
-           CAMERA OVERLAY FIX
-           ===================================================== */
-
         .camera-box {
             position: relative;
             width: 100%;
@@ -46,10 +42,6 @@
     <h1>🕳️ PotholeWatch</h1>
     <p class="subtitle">Live AI road condition detection</p>
 
-    <!-- =====================================================
-         CAMERA
-         ===================================================== -->
-
     <div class="camera-box">
 
         <video
@@ -62,7 +54,6 @@
 
     </div>
 
-
     <button
         class="start-button"
         id="startButton"
@@ -72,7 +63,6 @@
 
     </button>
 
-
     <div class="status">
 
         <span id="status">
@@ -80,7 +70,6 @@
         </span>
 
     </div>
-
 
     <div class="info">
 
@@ -92,7 +81,6 @@
 
     </div>
 
-
     <div class="info">
 
         <h3>🕐 Last Report Sent</h3>
@@ -103,7 +91,6 @@
 
     </div>
 
-
     <div class="info">
 
         <h3>📦 Reports Waiting</h3>
@@ -113,7 +100,6 @@
         </p>
 
     </div>
-
 
     <div class="info">
 
@@ -135,6 +121,9 @@
 const MODEL_PATH =
     "model/best.onnx";
 
+const VEHICLE_MODEL_PATH =
+    "model/yolo26n.onnx";
+
 const API_URL =
     "https://bus2city-ai.onrender.com/reports";
 
@@ -144,32 +133,18 @@ const BUS_ID =
 const INPUT_SIZE =
     640;
 
-
-// Minimum confidence required
 const CONFIDENCE_THRESHOLD =
     0.30;
 
+const VEHICLE_CONFIDENCE_THRESHOLD =
+    0.30;
 
-// Non-Maximum Suppression
 const NMS_IOU_THRESHOLD =
     0.45;
-
-
-// ============================================================
-// OLD RAPID-DETECTION PROTECTION
-// ============================================================
-//
-// This is still kept as an extra safety layer.
-//
-// The NEW tracking system below is what actually prevents
-// the same pothole from being reported repeatedly.
-//
 
 const DETECTION_COOLDOWN =
     3000;
 
-
-// Send collected reports every 60 seconds
 const REPORT_INTERVAL =
     60000;
 
@@ -177,28 +152,9 @@ const REPORT_INTERVAL =
 // ============================================================
 // POTHOLE TRACKING SETTINGS
 // ============================================================
-//
-// IMPORTANT:
-//
-// These are NOT GPS distances.
-//
-// They are distances between the pothole's position
-// inside consecutive camera frames.
-//
-// 150 pixels means:
-// "If the pothole moves less than roughly 150 pixels
-// between frames, it can still be the same pothole."
-//
 
 const TRACK_DISTANCE_PIXELS =
     150;
-
-
-// How long we remember a pothole if it temporarily
-// disappears from detection.
-//
-// 2 seconds.
-//
 
 const TRACK_LOST_TIME =
     2000;
@@ -242,7 +198,10 @@ const startButton =
 
 let session = null;
 
+let vehicleSession = null;
+
 let latitude = null;
+
 let longitude = null;
 
 let detectionRunning = false;
@@ -255,7 +214,7 @@ let gpsWatcher = null;
 
 
 // ============================================================
-// NEW POTHOLE TRACKING VARIABLES
+// POTHOLE TRACKING VARIABLES
 // ============================================================
 
 let potholeTracks = [];
@@ -264,7 +223,7 @@ let nextTrackId = 1;
 
 
 // ============================================================
-// LOAD MODEL
+// LOAD MODELS
 // ============================================================
 
 async function loadModel() {
@@ -272,8 +231,12 @@ async function loadModel() {
     try {
 
         statusText.innerText =
-            "Loading ONNX model...";
+            "Loading ONNX models...";
 
+
+        // ----------------------------------------------------
+        // POTHOLE MODEL
+        // ----------------------------------------------------
 
         session =
             await ort.InferenceSession.create(
@@ -282,24 +245,47 @@ async function loadModel() {
 
 
         console.log(
-            "ONNX model loaded successfully"
+            "Pothole ONNX model loaded successfully"
         );
 
-
         console.log(
-            "Inputs:",
+            "Pothole inputs:",
             session.inputNames
         );
 
-
         console.log(
-            "Outputs:",
+            "Pothole outputs:",
             session.outputNames
         );
 
 
+        // ----------------------------------------------------
+        // VEHICLE MODEL
+        // ----------------------------------------------------
+
+        vehicleSession =
+            await ort.InferenceSession.create(
+                VEHICLE_MODEL_PATH
+            );
+
+
+        console.log(
+            "Vehicle ONNX model loaded successfully"
+        );
+
+        console.log(
+            "Vehicle inputs:",
+            vehicleSession.inputNames
+        );
+
+        console.log(
+            "Vehicle outputs:",
+            vehicleSession.outputNames
+        );
+
+
         statusText.innerText =
-            "🟢 AI model loaded - ready";
+            "🟢 AI models loaded - ready";
 
     }
 
@@ -325,10 +311,13 @@ async function loadModel() {
 
 async function startDetection() {
 
-    if (!session) {
+    if (
+        !session ||
+        !vehicleSession
+    ) {
 
         alert(
-            "AI model is still loading."
+            "AI models are still loading."
         );
 
         return;
@@ -373,8 +362,6 @@ async function startDetection() {
         await video.play();
 
 
-        // Wait until camera dimensions are available
-
         if (
             video.videoWidth === 0
         ) {
@@ -393,7 +380,6 @@ async function startDetection() {
 
         canvas.width =
             video.videoWidth;
-
 
         canvas.height =
             video.videoHeight;
@@ -414,7 +400,6 @@ async function startDetection() {
 
                         latitude =
                             position.coords.latitude;
-
 
                         longitude =
                             position.coords.longitude;
@@ -524,7 +509,9 @@ async function startDetection() {
 
 async function detectFrame() {
 
-    if (!detectionRunning) {
+    if (
+        !detectionRunning
+    ) {
 
         return;
 
@@ -541,22 +528,17 @@ async function detectFrame() {
 
         ) {
 
-            const detections =
+            const results =
                 await runInference();
 
 
             drawDetections(
-                detections
+                results
             );
 
 
-            // =================================================
-            // NEW:
-            // Track potholes between frames
-            // =================================================
-
             updatePotholeTracks(
-                detections
+                results.potholes
             );
 
         }
@@ -599,7 +581,6 @@ async function runInference() {
     inputCanvas.width =
         size;
 
-
     inputCanvas.height =
         size;
 
@@ -611,7 +592,6 @@ async function runInference() {
 
 
     // Resize camera frame
-    // to 640 x 640
 
     inputCtx.drawImage(
 
@@ -706,7 +686,11 @@ async function runInference() {
         );
 
 
-    const outputs =
+    // ========================================================
+    // POTHOLE MODEL
+    // ========================================================
+
+    const potholeOutputs =
         await session.run({
 
             images:
@@ -715,9 +699,63 @@ async function runInference() {
         });
 
 
-    const output =
-        outputs.output0;
+    const potholeOutput =
+        potholeOutputs.output0;
 
+
+    const potholes =
+        parsePotholeDetections(
+            potholeOutput
+        );
+
+
+    // ========================================================
+    // VEHICLE MODEL
+    // ========================================================
+
+    const vehicleOutputs =
+        await vehicleSession.run({
+
+            images:
+                inputTensor
+
+        });
+
+
+    const vehicleOutput =
+        vehicleOutputs.output0;
+
+
+    const vehicles =
+        parseVehicleDetections(
+            vehicleOutput
+        );
+
+
+    return {
+
+        potholes:
+            nonMaximumSuppression(
+                potholes
+            ),
+
+        vehicles:
+            vehicleNonMaximumSuppression(
+                vehicles
+            )
+
+    };
+
+}
+
+
+// ============================================================
+// PARSE POTHOLE DETECTIONS
+// ============================================================
+
+function parsePotholeDetections(
+    output
+) {
 
     const values =
         output.data;
@@ -727,12 +765,9 @@ async function runInference() {
         8400;
 
 
-    const detections = [];
+    const detections =
+        [];
 
-
-    // ========================================================
-    // READ YOLO OUTPUT
-    // ========================================================
 
     for (
 
@@ -806,18 +841,189 @@ async function runInference() {
     }
 
 
-    return nonMaximumSuppression(
-        detections
-    );
+    return detections;
 
 }
 
 
 // ============================================================
-// NON-MAXIMUM SUPPRESSION
+// PARSE VEHICLE DETECTIONS
 // ============================================================
 
-function nonMaximumSuppression(
+function parseVehicleDetections(
+    output
+) {
+
+    const data =
+        output.data;
+
+
+    const numDetections =
+        8400;
+
+
+    const numClasses =
+        80;
+
+
+    const VEHICLE_CLASSES = {
+
+        2:
+            "Car",
+
+        3:
+            "Motorcycle",
+
+        5:
+            "Bus",
+
+        7:
+            "Truck"
+
+    };
+
+
+    const detections =
+        [];
+
+
+    for (
+
+        let i = 0;
+
+        i < numDetections;
+
+        i++
+
+    ) {
+
+        const cx =
+            data[i];
+
+
+        const cy =
+            data[
+                numDetections + i
+            ];
+
+
+        const width =
+            data[
+                2 * numDetections + i
+            ];
+
+
+        const height =
+            data[
+                3 * numDetections + i
+            ];
+
+
+        let bestClass =
+            -1;
+
+
+        let bestConfidence =
+            0;
+
+
+        // ----------------------------------------------------
+        // Find highest vehicle class score
+        // ----------------------------------------------------
+
+        for (
+
+            let c = 0;
+
+            c < numClasses;
+
+            c++
+
+        ) {
+
+            const confidence =
+                data[
+                    (4 + c) *
+                    numDetections +
+                    i
+                ];
+
+
+            if (
+
+                confidence >
+                bestConfidence
+
+            ) {
+
+                bestConfidence =
+                    confidence;
+
+                bestClass =
+                    c;
+
+            }
+
+        }
+
+
+        // ----------------------------------------------------
+        // Keep only vehicle classes
+        // ----------------------------------------------------
+
+        if (
+
+            VEHICLE_CLASSES[
+                bestClass
+            ] &&
+
+            bestConfidence >=
+            VEHICLE_CONFIDENCE_THRESHOLD
+
+        ) {
+
+            detections.push({
+
+                x:
+                    cx - width / 2,
+
+                y:
+                    cy - height / 2,
+
+                width:
+                    width,
+
+                height:
+                    height,
+
+                confidence:
+                    bestConfidence,
+
+                classId:
+                    bestClass,
+
+                className:
+                    VEHICLE_CLASSES[
+                        bestClass
+                    ]
+
+            });
+
+        }
+
+    }
+
+
+    return detections;
+
+}
+
+
+// ============================================================
+// VEHICLE NON-MAXIMUM SUPPRESSION
+// ============================================================
+
+function vehicleNonMaximumSuppression(
     detections
 ) {
 
@@ -830,7 +1036,8 @@ function nonMaximumSuppression(
     );
 
 
-    const selected = [];
+    const selected =
+        [];
 
 
     while (
@@ -854,13 +1061,66 @@ function nonMaximumSuppression(
                 candidate =>
 
                     calculateIoU(
-
                         current,
-
                         candidate
-
                     ) <
+                    NMS_IOU_THRESHOLD
 
+            );
+
+    }
+
+
+    return selected;
+
+}
+
+
+// ============================================================
+// NON-MAXIMUM SUPPRESSION
+// ============================================================
+
+function nonMaximumSuppression(
+    detections
+) {
+
+    detections.sort(
+
+        (a, b) =>
+            b.confidence -
+            a.confidence
+
+    );
+
+
+    const selected =
+        [];
+
+
+    while (
+
+        detections.length > 0
+
+    ) {
+
+        const current =
+            detections.shift();
+
+
+        selected.push(
+            current
+        );
+
+
+        detections =
+            detections.filter(
+
+                candidate =>
+
+                    calculateIoU(
+                        current,
+                        candidate
+                    ) <
                     NMS_IOU_THRESHOLD
 
             );
@@ -979,11 +1239,19 @@ function calculateIoU(
 // ============================================================
 
 function drawDetections(
-    detections
+    results
 ) {
 
+    const potholes =
+        results.potholes;
+
+
+    const vehicles =
+        results.vehicles;
+
+
     // ========================================================
-    // IMPORTANT CAMERA OVERLAY FIX
+    // CAMERA OVERLAY SIZE
     // ========================================================
 
     if (
@@ -1027,10 +1295,98 @@ function drawDetections(
         INPUT_SIZE;
 
 
+    // ========================================================
+    // DRAW VEHICLES
+    // ========================================================
+
     for (
 
         const detection of
-        detections
+        vehicles
+
+    ) {
+
+        const x =
+            detection.x *
+            scaleX;
+
+
+        const y =
+            detection.y *
+            scaleY;
+
+
+        const width =
+            detection.width *
+            scaleX;
+
+
+        const height =
+            detection.height *
+            scaleY;
+
+
+        ctx.strokeStyle =
+            "blue";
+
+
+        ctx.lineWidth =
+            4;
+
+
+        ctx.strokeRect(
+
+            x,
+            y,
+
+            width,
+            height
+
+        );
+
+
+        ctx.fillStyle =
+            "blue";
+
+
+        ctx.font =
+            "18px Arial";
+
+
+        const percentage =
+            (
+                detection.confidence *
+                100
+            ).toFixed(1);
+
+
+        ctx.fillText(
+
+            detection.className +
+            " " +
+            percentage +
+            "%",
+
+            x,
+
+            Math.max(
+                20,
+                y - 5
+            )
+
+        );
+
+    }
+
+
+    // ========================================================
+    // DRAW POTHOLES
+    // ========================================================
+
+    for (
+
+        const detection of
+        potholes
 
     ) {
 
@@ -1082,12 +1438,9 @@ function drawDetections(
 
 
         const percentage =
-
             (
-
                 detection.confidence *
                 100
-
             ).toFixed(1);
 
 
@@ -1114,27 +1467,6 @@ function drawDetections(
 // ============================================================
 // POTHOLE TRACKING
 // ============================================================
-//
-// THIS IS THE NEW DUPLICATE-PREVENTION SYSTEM.
-//
-// It does NOT use GPS.
-//
-// It compares where the pothole appears inside the camera
-// between consecutive frames.
-//
-// Same pothole:
-//
-// Frame 1 → Track #1
-// Frame 2 → Track #1
-// Frame 3 → Track #1
-// Frame 4 → Track #1
-//
-// Only Frame 1 creates the report.
-//
-
-// ============================================================
-// GET CENTER OF DETECTION
-// ============================================================
 
 function getDetectionCenter(
     detection
@@ -1156,7 +1488,7 @@ function getDetectionCenter(
 
 
 // ============================================================
-// DISTANCE BETWEEN TWO DETECTIONS
+// DISTANCE BETWEEN DETECTIONS
 // ============================================================
 
 function getDetectionDistance(
@@ -1212,11 +1544,6 @@ function updatePotholeTracks(
         new Set();
 
 
-    // ========================================================
-    // TRY TO MATCH EACH NEW DETECTION
-    // WITH AN EXISTING POTHOLE
-    // ========================================================
-
     for (
 
         const detection of
@@ -1231,10 +1558,6 @@ function updatePotholeTracks(
         let closestDistance =
             TRACK_DISTANCE_PIXELS + 1;
 
-
-        // ----------------------------------------------------
-        // Find nearest existing track
-        // ----------------------------------------------------
 
         for (
 
@@ -1276,7 +1599,6 @@ function updatePotholeTracks(
                 closestDistance =
                     distance;
 
-
                 closestTrack =
                     track;
 
@@ -1284,10 +1606,6 @@ function updatePotholeTracks(
 
         }
 
-
-        // ====================================================
-        // SAME POTHOLE FOUND
-        // ====================================================
 
         if (
             closestTrack !== null
@@ -1315,19 +1633,7 @@ function updatePotholeTracks(
                 closestTrack.id
             );
 
-
-            // IMPORTANT:
-            //
-            // DO NOT REPORT AGAIN.
-            //
-            // This is the actual duplicate prevention.
-
         }
-
-
-        // ====================================================
-        // NEW POTHOLE
-        // ====================================================
 
         else {
 
@@ -1364,8 +1670,6 @@ function updatePotholeTracks(
             );
 
 
-            // Report this pothole ONCE
-
             handleNewPothole(
                 newTrack
             );
@@ -1374,14 +1678,6 @@ function updatePotholeTracks(
 
     }
 
-
-    // ========================================================
-    // REMOVE OLD TRACKS
-    // ========================================================
-    //
-    // If the pothole hasn't been seen for 2 seconds,
-    // we assume it has left the camera.
-    //
 
     potholeTracks =
         potholeTracks.filter(
@@ -1436,10 +1732,6 @@ function createPotholeReport(
     confidence
 ) {
 
-    // ========================================================
-    // GPS MUST BE AVAILABLE
-    // ========================================================
-
     if (
 
         latitude === null ||
@@ -1464,10 +1756,6 @@ function createPotholeReport(
         Date.now();
 
 
-    // ========================================================
-    // EXTRA SAFETY COOLDOWN
-    // ========================================================
-
     if (
 
         now -
@@ -1486,10 +1774,6 @@ function createPotholeReport(
         now;
 
 
-    // ========================================================
-    // REPORT PACKET
-    // ========================================================
-
     const report = {
 
         bus_id:
@@ -1497,23 +1781,17 @@ function createPotholeReport(
 
         latitude:
             Number(
-
                 latitude.toFixed(6)
-
             ),
 
         longitude:
             Number(
-
                 longitude.toFixed(6)
-
             ),
 
         confidence:
             Number(
-
                 confidence.toFixed(2)
-
             )
 
     };
@@ -1772,7 +2050,7 @@ async function sendReports() {
 
 
 // ============================================================
-// LOAD AI MODEL
+// LOAD AI MODELS
 // ============================================================
 
 loadModel();
