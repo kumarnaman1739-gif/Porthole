@@ -1,0 +1,9 @@
+model/best_extracted/
+model/best.pt
+model/best.pt.zip
+model/yolo26n.pt/
+model/yolo26n.pt.zip
+model/WhatsApp Video 2026-09-24 at 13.08.00.mp4
+model/code.py
+runs/
+browser-test/
